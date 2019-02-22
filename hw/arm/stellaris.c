@@ -1206,6 +1206,158 @@ void do_sys_reset(void *opaque, int n, int level)
     }
 }
 
+typedef struct StellarisFlashControl {
+    SysBusDevice parent_obj;
+
+    MemoryRegion iomem;
+    uint32_t fma;
+    uint32_t fmd;
+    uint32_t fmc;
+    uint32_t fcris;
+    uint32_t fcim;
+    uint32_t fcmisc;
+    uint32_t fmpre;
+    uint32_t fmppe;
+    uint32_t usecrl;
+} stellaris_flash_control_state;
+
+#define TYPE_STELLARIS_FLASH_CONTROL "stellaris-flash-control"
+#define STELLARIS_FLASH_CONTROL(obj) \
+    OBJECT_CHECK(stellaris_flash_control_state, (obj), TYPE_STELLARIS_FLASH_CONTROL)
+
+#define LOG_PRINTF(fmt, ...) \
+do { fprintf(stderr, fmt , ## __VA_ARGS__);} while (0)
+
+static uint64_t stellaris_flash_control_read(void *opaque, hwaddr offset,
+                                   unsigned size)
+{
+    stellaris_flash_control_state *s = (stellaris_flash_control_state *)opaque;
+
+    switch (offset) {
+        case 0x00:
+            return s->fma;
+            break;
+
+        case 0x04:
+            return s->fmd;
+            break;
+
+        case 0x08:
+            return s->fmc;
+            break;
+
+        case 0x0c:
+            return s->fcris;
+            break;
+
+        case 0x10:
+            return s->fcim;
+            break;
+
+        case 0x14:
+            return s->fcmisc;
+            break;
+
+        case 0x1130:
+            return s->fmpre;
+            break;
+
+        case 0x1134:
+            return s->fmppe;
+            break;
+
+        case 0x1140:
+            return s->usecrl;
+            break;
+
+    default:
+        qemu_log_mask(LOG_GUEST_ERROR,
+                      "stellaris_flash_control: read at bad offset 0x%x\n", (int)offset);
+        return 0;
+    }
+}
+
+static void stellaris_flash_control_write(void *opaque, hwaddr offset,
+                                uint64_t value, unsigned size)
+{
+    stellaris_flash_control_state *s = (stellaris_flash_control_state *)opaque;
+
+    switch (offset) {
+        case 0x00:
+            s->fma = value;
+            break;
+
+        case 0x04:
+            s->fmd = value;
+            break;
+
+        case 0x08:
+            s->fmc = value;
+            break;
+
+        case 0x0c:
+            s->fcris = value;
+            break;
+
+        case 0x10:
+            s->fcim = value;
+            break;
+
+        case 0x14:
+            s->fcmisc = value;
+            break;
+
+        case 0x1130:
+            s->fmpre = value;
+            break;
+
+        case 0x1134:
+            s->fmppe = value;
+            break;
+
+        case 0x1140:
+            s->usecrl = value;
+            break;
+    default:
+        qemu_log_mask(LOG_GUEST_ERROR,
+                      "stellaris_adc: write at bad offset 0x%x\n", (int)offset);
+    }
+}
+
+static const MemoryRegionOps stellaris_flash_control_ops = {
+    .read = stellaris_flash_control_read,
+    .write = stellaris_flash_control_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
+};
+
+static const VMStateDescription vmstate_stellaris_flash_control = {
+    .name = "stellaris_flash_control",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .fields = (VMStateField[]) {
+        VMSTATE_UINT32(fma, stellaris_flash_control_state),
+        VMSTATE_UINT32(fmd, stellaris_flash_control_state),
+        VMSTATE_UINT32(fmc, stellaris_flash_control_state),
+        VMSTATE_UINT32(fcris, stellaris_flash_control_state),
+        VMSTATE_UINT32(fcim, stellaris_flash_control_state),
+        VMSTATE_UINT32(fcmisc, stellaris_flash_control_state),
+        VMSTATE_UINT32(fmpre, stellaris_flash_control_state),
+        VMSTATE_UINT32(fmppe, stellaris_flash_control_state),
+        VMSTATE_UINT32(usecrl, stellaris_flash_control_state),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
+static void stellaris_flash_control_init(Object *obj)
+{
+    stellaris_flash_control_state *s = STELLARIS_FLASH_CONTROL(obj);
+    SysBusDevice *sbd = SYS_BUS_DEVICE(obj);
+
+    memory_region_init_io(&s->iomem, obj, &stellaris_flash_control_ops, s,
+                          "flash-control", 0x1140);
+    sysbus_init_mmio(sbd, &s->iomem);
+}
+
 /* Board init.  */
 static stellaris_board_info stellaris_boards[] = {
   { "LM3S811EVB",
@@ -1281,6 +1433,7 @@ static void stellaris_init(MachineState *ms, stellaris_board_info *board)
     int flash_size;
     I2CBus *i2c;
     DeviceState *dev;
+    SysBusDevice *sysbus;
     int i;
     int j;
 
@@ -1428,6 +1581,12 @@ static void stellaris_init(MachineState *ms, stellaris_board_info *board)
         }
     }
 
+    /* Flash control */
+    dev = qdev_create(NULL, TYPE_STELLARIS_FLASH_CONTROL);
+    qdev_init_nofail(dev);
+    sysbus = SYS_BUS_DEVICE(dev);
+    sysbus_mmio_map(sysbus, 0, 0x400fd000);
+
     /* Add dummy regions for the devices we don't implement yet,
      * so guest accesses don't cause unlogged crashes.
      */
@@ -1439,7 +1598,6 @@ static void stellaris_init(MachineState *ms, stellaris_board_info *board)
     create_unimplemented_device("QEI-1", 0x4002d000, 0x1000);
     create_unimplemented_device("analogue-comparator", 0x4003c000, 0x1000);
     create_unimplemented_device("hibernation", 0x400fc000, 0x1000);
-    create_unimplemented_device("flash-control", 0x400fd000, 0x1000);
 
     armv7m_load_kernel(ARM_CPU(first_cpu), ms->kernel_filename, flash_size);
 }
@@ -1459,7 +1617,7 @@ static void lm3s811evb_class_init(ObjectClass *oc, void *data)
 {
     MachineClass *mc = MACHINE_CLASS(oc);
 
-    mc->desc = "Stellaris LM3S811EVB";
+    mc->desc = "Stellaris LM3S811EVB (with flash-control)";
     mc->init = lm3s811evb_init;
     mc->ignore_memory_transaction_failures = true;
     mc->default_cpu_type = ARM_CPU_TYPE_NAME("cortex-m3");
@@ -1532,6 +1690,14 @@ static void stellaris_adc_class_init(ObjectClass *klass, void *data)
     dc->vmsd = &vmstate_stellaris_adc;
 }
 
+// ??
+static void stellaris_flash_control_class_init(ObjectClass *class, void *data)
+{
+    DeviceClass *dc = DEVICE_CLASS(class);
+
+    dc->vmsd = &vmstate_stellaris_flash_control;
+}
+
 static const TypeInfo stellaris_adc_info = {
     .name          = TYPE_STELLARIS_ADC,
     .parent        = TYPE_SYS_BUS_DEVICE,
@@ -1540,11 +1706,20 @@ static const TypeInfo stellaris_adc_info = {
     .class_init    = stellaris_adc_class_init,
 };
 
+static const TypeInfo stellaris_flash_control_info = {
+    .name          = "stellaris-flash-control",
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .instance_size = sizeof(stellaris_flash_control_state),
+    .instance_init = stellaris_flash_control_init,
+    .class_init    = stellaris_flash_control_class_init,
+};
+
 static void stellaris_register_types(void)
 {
     type_register_static(&stellaris_i2c_info);
     type_register_static(&stellaris_gptm_info);
     type_register_static(&stellaris_adc_info);
+    type_register_static(&stellaris_flash_control_info);
 }
 
 type_init(stellaris_register_types)
