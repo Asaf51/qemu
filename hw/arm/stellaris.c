@@ -1206,6 +1206,33 @@ void do_sys_reset(void *opaque, int n, int level)
     }
 }
 
+//*****************************************************************************
+//
+// The following define the offsets of the FLASH registers.
+//
+//*****************************************************************************
+#define FLASH_FMA               0x400FD000  // Memory address register
+#define FLASH_FMD               0x400FD004  // Memory data register
+#define FLASH_FMC               0x400FD008  // Memory control register
+#define FLASH_FCRIS             0x400FD00c  // Raw interrupt status register
+#define FLASH_FCIM              0x400FD010  // Interrupt mask register
+#define FLASH_FCMISC            0x400FD014  // Interrupt status register
+#define FLASH_FMPRE             0x400FE130  // FLASH read protect register
+#define FLASH_FMPPE             0x400FE134  // FLASH program protect register
+#define FLASH_USECRL            0x400FE140  // uSec reload register
+
+//*****************************************************************************
+//
+// The following define the bit fields in the FLASH_FMC register.
+//
+//*****************************************************************************
+#define FLASH_FMC_WRKEY_MASK    0xFFFF0000  // FLASH write key mask
+#define FLASH_FMC_WRKEY         0xA4420000  // FLASH write key
+#define FLASH_FMC_COMT          0x00000008  // Commit user register
+#define FLASH_FMC_MERASE        0x00000004  // Mass erase FLASH
+#define FLASH_FMC_ERASE         0x00000002  // Erase FLASH page
+#define FLASH_FMC_WRITE         0x00000001  // Write FLASH word
+
 typedef struct StellarisFlashControl {
     SysBusDevice parent_obj;
 
@@ -1227,6 +1254,8 @@ typedef struct StellarisFlashControl {
 
 #define LOG_PRINTF(fmt, ...) \
 do { fprintf(stderr, fmt , ## __VA_ARGS__);} while (0)
+
+MemoryRegion *g_stellaris_flash;
 
 static uint64_t stellaris_flash_control_read(void *opaque, hwaddr offset,
                                    unsigned size)
@@ -1293,10 +1322,33 @@ static void stellaris_flash_control_write(void *opaque, hwaddr offset,
 
         case 0x08:
             s->fmc = value;
+
+            if ((FLASH_FMC_WRKEY | FLASH_FMC_WRITE) == value) {
+                LOG_PRINTF("%s", "Write request!\r\n");
+                LOG_PRINTF("Writing 0x%x to: %x\r\n", s->fmd, s->fma);
+
+                MemTxResult res = memory_region_dispatch_write(g_stellaris_flash,
+                                         s->fma,
+                                         s->fmd,
+                                         4,
+                                         MEMTXATTRS_UNSPECIFIED);
+
+
+                if (res != MEMTX_OK) {
+                    LOG_PRINTF("We have a problem: %d\r\n", res);
+                }
+
+                LOG_PRINTF("Telling the program everything is ok.\r\n");
+                // Tell the program the data has been written
+                s->fmc = 0;
+
+                // The write succeeded!
+                s->fcris = 0;
+            }
             break;
 
         case 0x0c:
-            s->fcris = value;
+            /* Do nothing */
             break;
 
         case 0x10:
@@ -1438,17 +1490,17 @@ static void stellaris_init(MachineState *ms, stellaris_board_info *board)
     int j;
 
     MemoryRegion *sram = g_new(MemoryRegion, 1);
-    MemoryRegion *flash = g_new(MemoryRegion, 1);
+    g_stellaris_flash = g_new(MemoryRegion, 1);
     MemoryRegion *system_memory = get_system_memory();
 
     flash_size = (((board->dc0 & 0xffff) + 1) << 1) * 1024;
     sram_size = ((board->dc0 >> 18) + 1) * 1024;
 
     /* Flash programming is done via the SCU, so pretend it is ROM.  */
-    memory_region_init_ram(flash, NULL, "stellaris.flash", flash_size,
+    memory_region_init_ram(g_stellaris_flash, NULL, "stellaris.flash", flash_size,
                            &error_fatal);
-    memory_region_set_readonly(flash, true);
-    memory_region_add_subregion(system_memory, 0, flash);
+    memory_region_set_readonly(g_stellaris_flash, true);
+    memory_region_add_subregion(system_memory, 0, g_stellaris_flash);
 
     memory_region_init_ram(sram, NULL, "stellaris.sram", sram_size,
                            &error_fatal);
